@@ -167,8 +167,13 @@ operator |= (simd_t<T,N,__m128i> &a, T b)
 // Bit-wise operations.
 inline xmm_i8 operator & (const xmm_i8 &a, const xmm_i8 &b) { return _mm_and_si128(a, b); }
 
-/// Element-wise addition.
+/// Element-wise arithmetics.
 inline xmm_i8 operator + (const xmm_i8 &a, const xmm_i8 &b) { return _mm_add_epi8(a, b); }
+inline xmm_i8 operator - (const xmm_i8 &a, const xmm_i8 &b) { return _mm_sub_epi8(a, b); }
+
+/// Element-wise arithmetic-assign.
+inline xmm_i8& operator += (xmm_i8 &a, const xmm_i8 &b) { return a = a + b; }
+inline xmm_i8& operator -= (xmm_i8 &a, const xmm_i8 &b) { return a = a - b; }
 
 /// Element-wise comparison for equality.
 inline xmm_i8 operator == (const xmm_i8 &a, const xmm_i8 &b) { return _mm_cmpeq_epi8(a, b); }

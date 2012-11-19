@@ -29,6 +29,24 @@ void write_card(char s[3], Card card)
 	s[2] = 0;
 }
 
+int Hand::GetCards(Card *cards) const
+{
+    int n = 0;
+    RankMask ranks_present = simd::GetMask(value > 0x10) & 0x1FFF;
+    while (ranks_present)
+    {
+        int r = intrinsic::bit_scan_reverse(ranks_present);
+        int8_t b = ((int8_t*)&value)[r] & 0xF;
+        while (b)
+        {
+            int s = intrinsic::bit_scan_reverse(b);
+            cards[n++] = Card((Rank)r, (Suit)s);
+            b &= ~(1 << s);
+        }
+        ranks_present &= ~(1 << r);
+    }
+    return n;
+}
 
 /// Returns an integer with the highest N set bits of x kept.
 int KeepHighestBitsSet(int x, int N)

@@ -101,8 +101,16 @@ enum HandCategory
 struct Hand
 {
     simd::simd_t<int8_t,16> value;
+
     Hand() { }
     Hand(const simd::simd_t<int8_t,16> &_value) : value(_value) { }
+    Hand(const Card &card)
+    {
+        int r = card.rank;
+        int s = card.suit;
+        ((uint8_t*)&value)[r] += 0x10 | (1 << s);
+        ((uint16_t*)&value)[7] += 1 << (s * 4);
+    }
     Hand(const Card *cards, size_t num_cards) 
     {
         for (size_t i = 0; i < num_cards; i++)
@@ -113,15 +121,32 @@ struct Hand
             ((uint16_t*)&value)[7] += 1 << (s * 4);
         }
     }
+    Hand(const Hand *hands, size_t num_hands)
+    {
+        for (size_t i = 0; i < num_hands; i++)
+            this->value += hands[i].value;
+    }
+
+    int GetCards(Card *cards) const;
+
+    Hand& operator += (const Hand &a)
+    {
+        this->value += a.value;
+        return *this;
+    }
+
+    Hand& operator -= (const Hand &a)
+    {
+        this->value -= a.value;
+        return *this;
+    }
 };
 
-#if 0
 /// Combines two hands.
-Hand operator + (const Hand &a, const Hand &b)
+inline Hand operator + (const Hand &a, const Hand &b)
 {
     return Hand(a.value + b.value);
 }
-#endif
 
 typedef unsigned int RankMask;
 
