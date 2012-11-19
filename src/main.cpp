@@ -57,8 +57,11 @@ hand_t find_best_hand(const card_t cards[7], HandStrength *strength_output)
 /// This can also be viewed as drawing two cards (a,b) from 1..13 randomly.
 /// If a = b, this maps to a pair (off-suit); if a < b, this maps to off-suit;
 /// if a > b, this maps to same-suit.
-int compute_hole_index(const Card cards[2])
+int compute_hole_index(const Hand &hand)
 {
+    Card cards[2];
+    hand.GetCards(cards);
+
 	int r1 = cards[0].rank, r2 = cards[1].rank;
 	if (r1 > r2) // make sure r1 <= r2
 		std::swap(r1, r2);
@@ -114,11 +117,11 @@ void simulate(int num_players, int num_simulations)
 	}
 
 	// Initialize a deck of cards.
-	Card deck[52];
+	Hand deck[52];
 	for (int i = 0; i < 52; i++)
 	{
-		deck[i].rank = (Rank)(i / 4);
-		deck[i].suit = (Suit)(i % 4);
+        Card card((Rank)(i / 4), (Suit)(i % 4));
+        deck[i] = Hand(card);
 	}
 
 	for (int i = 0; i < num_simulations; i++)
@@ -128,31 +131,28 @@ void simulate(int num_players, int num_simulations)
 
 		// Store the winning hand and hole cards.
         HandStrength win_strength;
-		Card win_hole[2];
 
 		// Use the first five cards as community cards.
-		Card c[7];
-		std::copy(deck + 0, deck + 5, c);
+        Hand community(deck, 5);
 
 		// Use each of the next two cards as hole cards for the players.
 		for (int j = 0; j < num_players; j++)
 		{
-			c[5] = deck[5 + j * 2];
-			c[6] = deck[5 + j * 2 + 1];
+            Hand hole;
+            hole += deck[5 + j * 2];
+			hole += deck[5 + j * 2 + 1];
 
 			// Update the occurrence of this combination of hole cards.
-			stat[compute_hole_index(&c[5])].num_occur[j]++;
+			stat[compute_hole_index(hole)].num_occur[j]++;
 
 			// Find the best 5-card combination from these 7 cards.
-            HandStrength strength = EvaluateHand(Hand(c, 7));
+            HandStrength strength = EvaluateHand(community + hole);
 
 			// Update the winning hand statistics for a game with j+1 players.
 			if (j == 0 || strength > win_strength)
 			{
                 win_strength = strength;
-				win_hole[0] = c[5];
-				win_hole[1] = c[6];
-				stat[compute_hole_index(win_hole)].num_win[j]++;
+				stat[compute_hole_index(hole)].num_win[j]++;
 			}
 		}
 
