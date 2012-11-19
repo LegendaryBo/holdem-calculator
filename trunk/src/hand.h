@@ -1,6 +1,8 @@
 #ifndef HOLDEM_HAND_H
 #define HOLDEM_HAND_H
 
+#include "simd.hpp"
+
 /* Represents the rank of a card. */
 enum Rank
 {
@@ -29,28 +31,17 @@ enum Suit
 };
 
 /* Represents a card. */
-struct card_t
+struct Card
 {
-    //unsigned char rank; /* see rank_t */
-    //unsigned char suit; /* see suit_t */
     Rank rank;
     Suit suit;
+    Card() : rank(), suit() { }
+    Card(Rank _rank, Suit _suit) : rank(_rank), suit(_suit) { }
+    Card(char _rank, char _suit);
 };
 
-typedef card_t Card;
-
-/*
-static const char value_s[] = { '2','3','4','5','6','7','8','9','T','J','Q','K','A' };
-static const char suit_s[] = { 'S','H','D','C' };
-*/
-
-/*
-static const char value_s[] = { '2','3','4','5','6','7','8','9','T','J','Q','K','A' };
-static const char suit_s[] = { 'S','H','D','C' };
-*/
-
 /* Represents the category of a hand. */
-enum hand_category_t
+enum HandCategory
 {
     HighCard = 0,		/* HC */
     OnePair = 1,			/* 1P */
@@ -63,8 +54,149 @@ enum hand_category_t
     StraightFlush = 8	/* SF */
 };
 
-typedef enum hand_category_t HandCategory;
+/**
+ * Represents a hand, i.e. a subset of a deck of 52 cards.
+ *
+ * To maximize performance, we use a 16-byte SIMD vector to store the hand
+ * internally. The format of the vector is as follows:
+ *
+ *    15  14  13  12  11                  ...                  1   0
+ *   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+ *   |S-H-D-C| 0 | A | K | Q | J | T | 9 | 8 | 7 | 6 | 5 | 4 | 3 | 2 |
+ *   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+ *
+ * Byte 0 to byte 12 stores information grouped by rank. Each byte has the
+ * following format:
+ *
+ *     7   6   5   4   3   2   1   0
+ *   +---+---+---+---+---+---+---+---+
+ *   | 0 |   COUNT   | S | H | D | C |
+ *   +---+---+---+---+---+---+---+---+
+ *   
+ * where the S, H, D, C bits are set if the cards of the corresponding rank
+ * and suit is present in the hand, respectively. Bit 4 to 6 contains the
+ * number of cards of the given rank in the hand. Bit 7 MUST be set to zero
+ * because the underlying SIMD instruction only supports signed byte.
+ *
+ * Byte 13 is reserved and is always zero.
+ *
+ * Byte 14 to 15 is divided into four 4-bit groups to store the number of 
+ * cards of each suit. Specifically, its format is as follows:
+ *
+ *    15  14  13  12  11  10   9   8   7   6   5   4   3   2   1   0
+ *   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+ *   |  Spade-count  |  Heart-count  | Diamond-count |  Club-count   |
+ *   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+ * 
+ * The above format achieves two design goals to improve performance:
+ * 1. Fast hand evaluation: a hand (with 5 or more cards) can be evaluated
+ *    quickly using SIMD instructions on the representing vector.
+ * 2. Fast hand construction: two hands can be combined quickly by directly
+ *    adding up the two vectors that represent each hand.
+ *
+ * This format does enforce the restriction that no two idential cards can
+ * be present in the same hand. This condition is certainly met when we draw
+ * a hand from a single deck.
+ */
+struct Hand
+{
+    simd::simd_t<int8_t,16> value;
+    Hand() { }
+    Hand(const simd::simd_t<int8_t,16> &_value) : value(_value) { }
+    Hand(const Card *cards, size_t num_cards) 
+    {
+        for (size_t i = 0; i < num_cards; i++)
+        {
+            int r = cards[i].rank;
+            int s = cards[i].suit;
+            ((uint8_t*)&value)[r] += 0x10 | (1 << s);
+            ((uint16_t*)&value)[7] += 1 << (s * 4);
+        }
+    }
+};
 
+#if 0
+/// Combines two hands.
+Hand operator + (const Hand &a, const Hand &b)
+{
+    return Hand(a.value + b.value);
+}
+#endif
+
+typedef unsigned int RankMask;
+
+/**
+ * Represents the strength of a 5-card hand. 
+ *
+ * The strength of a hand is composed of three parts -- hand category, master
+ * cards, and side cards (kickers). A hand from a higher category is stronger
+ * than a hand of from a lower category; for two hands from the same category,
+ * the one with higher master cards is stronger than the one with lower master
+ * cards; if the master cards are again equal, the kickers must be compared to
+ * determine their relative strength.
+ *
+ * Internally the hand strength is stored in a 30-bit integer as follows:
+ *
+ *    29      26 25      13 12       0
+ *   +---....---+---....---+---....---+
+ *   | category |  master  |  kicker  |
+ *   +---....---+---....---+---....---+
+ *
+ * Since card suit is only used to determine the hand category and is not 
+ * significant for hands in the same category, it is not stored as part of
+ * hand strength. Only the card ranks are stored (as a bit-map) for the master
+ * card and the kicker.
+ *
+ * The above format ensures that the strengths of two hands can be compared
+ * by simply comparing the representing integer.
+ *
+ * The actual 'master' and 'kicker' definition varies with the category, and
+ * is listed below:
+ *
+ *   Category         Example  Master  Kicker
+ *   ----------------------------------------
+ *   Straight flush   QJT98    Q       -
+ *   Four of a kind   7777K    7       K
+ *   Full house       77788    7       8
+ *   Flush            KT874    KT874   -
+ *   Straight         A2345    5       -
+ *   Three of a kind  888AA    8       A
+ *   Two pair         TTQQA    TQ      A
+ *   One pair         33789    3       789
+ *   High card        97543    97543   -
+ */
+struct HandStrength
+{
+    uint32_t value;
+    HandStrength() : value(0) { }
+    HandStrength(HandCategory category, RankMask master, RankMask kicker)
+        : value((category << 26) | (master << 13) | kicker) { }
+    HandStrength(HandCategory category, RankMask master)
+        : value((category << 26) | (master << 13)) { }
+};
+
+inline bool operator > (const HandStrength &a, const HandStrength &b)
+{
+    return a.value > b.value;
+}
+
+inline bool operator < (const HandStrength &a, const HandStrength &b)
+{
+    return a.value < b.value;
+}
+
+inline bool operator == (const HandStrength &a, const HandStrength &b)
+{
+    return a.value == b.value;
+}
+
+/**
+ * Evaluates a hand of five to seven cards and returns the strength of the
+ * strongest five-card combination.
+ */
+HandStrength EvaluateHand(const Hand &hand);
+
+#if 0
 /* Represents a hand of five cards. */
 struct hand_t
 {
@@ -81,18 +213,18 @@ struct hand_t
 hand_category_t normalize_hand(card_t cards[5]);
 
 hand_t make_hand(const card_t cards[5]);
+#endif
 
 /// Gets the character that represents a given rank.
 char format_rank(Rank rank);
 
-card_t read_card(char rank, char suit);
+void write_card(char s[3], Card card);
 
-void write_card(char s[3], card_t card);
+//int compare_hands(const hand_t &a, const hand_t &b);
 
-int compare_hands(const hand_t &a, const hand_t &b);
+//void write_hand(char s[20], const hand_t &h);
 
-void write_hand(char s[20], const hand_t &h);
-
+#if 0
 inline bool operator < (const hand_t &a, const hand_t &b)
 {
     return compare_hands(a, b) < 0;
@@ -102,45 +234,6 @@ inline bool operator > (const hand_t &a, const hand_t &b)
 {
     return compare_hands(a, b) > 0;
 }
-
-/*
-static void solve_problem_54()
-{
-    int lineno = 0;
-    int count = 0;
-    std::ifstream fs("input/poker.txt");
-    while (true)
-    {
-        char s[50];
-        fs.getline(s, sizeof(s));
-        if (s[0] == 0)
-            break;
-
-        lineno++;
-        card_t cards[10];
-        for (int i = 0; i < 10; i++)
-        {
-            cards[i] = read_card(s[3*i], s[3*i+1]);
-        }
-        
-        int winner = compare_hands(&cards[0], &cards[5]);
-#if 0
-        cout << lineno << "   ";
-        if (winner > 0)
-            cout << "Player 1 wins" << endl;
-        else if (winner < 0)
-            cout << "Player 2 wins" << endl;
-        else
-            cout << "Tie";
 #endif
-
-        if (winner > 0)
-            ++count;
-    }
-
-    //cout << "Player 1 wins " << count << " hands." << endl;
-    std::cout << count << std::endl;
-}
-*/
 
 #endif /* HOLDEM_HAND_H */
