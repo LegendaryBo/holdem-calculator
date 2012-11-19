@@ -107,6 +107,9 @@ typedef simd_t<uint32_t, 4, __m128i> xmm_u32;
 
 // @}
 
+/// SIMD boolean vectors (used as test results)...
+
+
 /// @ingroup SIMD
 /// @defgroup SIMD_Bitwise Bitwise Operations
 // @{
@@ -117,7 +120,7 @@ inline simd_t<T,N,__m128i>
 operator & (const simd_t<T,N,__m128i> &a, const simd_t<T,N,__m128i> &b) 
 { 
 	return _mm_and_si128(a, b);
-} 
+}
 
 /// Bitwise AND-assign for XMM integral vectors.
 template <class T, int N>
@@ -161,18 +164,26 @@ operator |= (simd_t<T,N,__m128i> &a, T b)
 
 // @}
 
+// Bit-wise operations.
+inline xmm_i8 operator & (const xmm_i8 &a, const xmm_i8 &b) { return _mm_and_si128(a, b); }
+
+/// Element-wise addition.
+inline xmm_i8 operator + (const xmm_i8 &a, const xmm_i8 &b) { return _mm_add_epi8(a, b); }
+
 /// Element-wise comparison for equality.
 inline xmm_i8 operator == (const xmm_i8 &a, const xmm_i8 &b) { return _mm_cmpeq_epi8(a, b); }
 inline xmm_u8 operator == (const xmm_u8 &a, const xmm_u8 &b) { return _mm_cmpeq_epi8(a, b); }
 
 /// Element-wise comparison for greater than.
 inline xmm_i8 operator > (const xmm_i8 &a, const xmm_i8 &b) { return _mm_cmpgt_epi8(a, b); }
+//inline xmm_i8 operator > (const xmm_i8 &a, int8_t b) { return _mm_cmpgt_epi8(a, b); }
 
 /// Creates a 16-bit mask from the most significant bits of the 16 bytes,
 /// and zero extends the upper bits in the result.
 /// @ingroup SIMD
 inline int byte_mask(const xmm_i8 &a) { return _mm_movemask_epi8(a); }
 inline int byte_mask(const xmm_u8 &a) { return _mm_movemask_epi8(a); }
+inline int GetMask(const xmm_i8 &a) { return byte_mask(a); }
 
 /// Shift elements (not bits) left.
 template <int Count> inline 

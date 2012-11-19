@@ -13,8 +13,8 @@ char format_rank(Rank rank)
 card_t read_card(char rank, char suit)
 {
 	card_t c;
-	c.rank = (unsigned char)(std::find(rank_s+0, rank_s+sizeof(rank_s), rank) - rank_s);
-	c.suit = (unsigned char)(std::find(suit_s+0, suit_s+sizeof(suit_s), suit) - suit_s);
+	c.rank = (Rank)(std::find(rank_s+0, rank_s+sizeof(rank_s), rank) - rank_s);
+	c.suit = (Suit)(std::find(suit_s+0, suit_s+sizeof(suit_s), suit) - suit_s);
 	return c;
 }
 
