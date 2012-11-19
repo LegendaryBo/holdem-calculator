@@ -76,7 +76,6 @@
   <ItemGroup>
     <ClCompile Include="src\hand.cpp" />
     <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\test.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\hand.h" />
