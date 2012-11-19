@@ -10,7 +10,7 @@ void test()
 	int lineno = 0;
 	int count = 0;
 	std::ifstream fs("poker.txt");
-	while (true)
+	for (;;)
 	{
 		char s[50];
 		fs.getline(s, sizeof(s));
@@ -56,7 +56,7 @@ void test2()
 {
 	std::ifstream fs("poker2.txt");
 	std::vector<hand_t> hands;
-	while (true)
+	for (;;)
 	{
 		char s[50];
 		fs.getline(s, sizeof(s));
