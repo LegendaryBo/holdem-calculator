@@ -1,6 +1,7 @@
 #ifndef HOLDEM_HAND_H
 #define HOLDEM_HAND_H
 
+#include <stdint.h>
 #include "simd.hpp"
 
 /* Represents the rank of a card. */
@@ -148,7 +149,86 @@ inline Hand operator + (const Hand &a, const Hand &b)
     return Hand(a.value + b.value);
 }
 
-typedef unsigned int RankMask;
+/**
+ * Represents a hand, i.e. a subset of a deck of 52 cards.
+ *
+ * To maximize performance, we use store the hand in a 64-bit integer 
+ * internally. The 64 bits are divided into four 16-bit groups, each
+ * storing information about a suit.
+ *
+ *    63      48 47      32 31      16 15       0
+ *   +----------+----------+----------+----------+
+ *   |  Spades  |  Hearts  | Diamonds |   Clubs  |
+ *   +----------+----------+----------+----------+
+ *
+ * The format representing each suit is as follows:
+ *
+ *     15  14  13  12  11                 ...                  1   0
+ *   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+ *   |   COUNT   | A | K | Q | J | T | 9 | 8 | 7 | 6 | 5 | 4 | 3 | 2 |
+ *   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+ *
+ * The lower 13 bits constitute a bit-mask where a bit is set if and only if
+ * the card of the given suit and rank is present in the hand. 
+ *
+ * The higher 3 bits store the count of the bits set in the lower 13 bits;
+ * that is, it stores the number of cards in the hand of the given suit.
+ * The range of this count is 0 to 7, inclusive.
+ *
+ * The above format achieves two design goals to optimize performance:
+ *   1. Fast hand evaluation: a hand (with 5 to 7 cards) can be evaluated
+ *      quickly using bit operations on the representing vector.
+ *   2. Fast hand construction: two hands can be combined quickly by directly
+ *      adding up the 64-bit integers that represent each hand.
+ *
+ * This format does impose two restrictions on the range of hands it can
+ * represent:
+ *   1. No two idential cards can be present in the same hand.
+ *   2. There can be no more than 7 cards in the hand.
+ * These conditions are certainly met when we work with hold 'em poker.
+ */
+struct Hand2
+{
+    uint64_t value;
+
+    Hand2() : value(0) { }
+    Hand2(uint64_t _value) : value(_value) { }
+    Hand2(const Card &card) 
+        : value((0x2000ULL | (1ULL << card.rank)) << (card.suit * 16)) { }
+    Hand2(const Card *cards, size_t num_cards) : value(0)
+    {
+        for (size_t i = 0; i < num_cards; i++)
+            value += Hand2(cards[i]).value;
+    }
+#if 0
+    Hand(const Hand *hands, size_t num_hands)
+    {
+        for (size_t i = 0; i < num_hands; i++)
+            this->value += hands[i].value;
+    }
+#endif
+
+    int GetCards(Card *cards) const;
+
+    Hand2& operator += (const Hand2 &a)
+    {
+        this->value += a.value;
+        return *this;
+    }
+
+    Hand2& operator -= (const Hand2 &a)
+    {
+        this->value -= a.value;
+        return *this;
+    }
+};
+
+/**
+ * Represents a bit-mask of ranks, where a bit is set if and only if the
+ * corresponding rank is present. Only the lower 13 bits are used, and the
+ * higher 3 bits must always be set to zero.
+ */
+typedef uint16_t RankMask;
 
 /**
  * Represents the strength of a 5-card hand. 
@@ -215,11 +295,17 @@ inline bool operator == (const HandStrength &a, const HandStrength &b)
     return a.value == b.value;
 }
 
+inline bool operator != (const HandStrength &a, const HandStrength &b)
+{
+    return a.value != b.value;
+}
+
 /**
  * Evaluates a hand of five to seven cards and returns the strength of the
  * strongest five-card combination.
  */
 HandStrength EvaluateHand(const Hand &hand);
+HandStrength EvaluateHand2(const Hand2 &hand);
 
 #if 0
 /* Represents a hand of five cards. */

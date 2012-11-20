@@ -61,9 +61,31 @@ int KeepHighestBitsSet(int x, int N)
     return result;
 }
 
-int KeepHighestBitSet(int x)
+/// Returns an integer with the highest N set bits of x kept.
+template <int N>
+static RankMask KeepHighestBitsSet(RankMask x)
 {
-    return (x)? (1 << intrinsic::bit_scan_reverse(x)) : 0;
+    RankMask result = 0;
+    for (int i = 0; i < N; i++)
+    {
+        int b = intrinsic::bit_scan_reverse(x);
+        result |= (RankMask(1) << b);
+        x &= ~result;
+    }
+    return result;
+}
+
+#if 0
+template <typename T>
+T KeepHighestBitSet(T x)
+{
+    return KeepHighestBitsSet<1>(x);
+}
+#endif
+
+static RankMask KeepHighestBitSet(RankMask x)
+{
+    return KeepHighestBitsSet<1>(x);
 }
 
 /**
@@ -178,6 +200,141 @@ HandStrength EvaluateHand(const Hand &hand)
 
     // Now we are left with high card.
     return HandStrength(HighCard, KeepHighestBitsSet(ranks_present, 5));
+}
+
+/**
+ * Evaluates a hand of five to seven cards and returns the strength of the
+ * strongest five-card combination.
+ */
+HandStrength EvaluateHand2(const Hand2 &hand)
+{
+    // Let v be the rank masks excluding the counter bits.
+    uint64_t v = hand.value & 0x1FFF1FFF1FFF1FFFULL;
+
+    // Compute masks of the ranks present in the hand, ranks that appear at
+    // least twice, ranks that appear at least 3 times, etc.
+    RankMask ranks_present, ranks_2_times, ranks_3_times, ranks_4_times;
+    
+    RankMask m = (uint16_t)v;
+    ranks_present = m;
+    
+    m = (uint16_t)(v >> 16);
+    ranks_2_times = ranks_present & m;
+    ranks_present |= m;
+
+    m = (uint16_t)(v >> 32);
+    ranks_3_times = ranks_2_times & m;
+    ranks_2_times |= ranks_present & m;
+    ranks_present |= m;
+    
+    m = (uint16_t)(v >> 48);
+    ranks_4_times = ranks_3_times & m;
+    ranks_3_times |= ranks_2_times & m;
+    ranks_2_times |= ranks_present & m;
+    ranks_present |= m;
+
+    // Compute a mask of the flushed suit. (For seven or fewer cards, there
+    // can be at most one flushed suit.) To have five to seven cards of the
+    // same suit, the suit counter, x, must take one of the following values:
+    // 5 (101), 6 (110), 7(111). Any non-flush values (x <= 4) have either
+    // the 0x4 bit unset, or the 0x4 bit set but the lower 2 bits unset. Thus
+    // we can check for flushed suit by testing the following condition:
+    // bit 0x4 and (bit 0x2 or bit 0x1) != 0.
+    uint64_t sc = hand.value & 0xE000E000E000E000ULL;      // suit counters
+    sc &= ((sc << 1) | (sc << 2)) & 0x8000800080008000ULL; // test flush
+    RankMask ranks_flushed = 0;
+    if (sc)
+    {
+        Suit suit_flushed = (Suit)(intrinsic::bit_scan_reverse(sc) / 16);
+        ranks_flushed = (RankMask)(v >> (16 * suit_flushed));
+    }
+
+    // Check for straight flush.
+    if (ranks_flushed)
+    {
+        // Check for straight within the flushed suit. This is automatic when
+        // there are exactly 5 cards; but when there are more than 5 cards, 
+        // straight and flush may not imply straight-flush. The algorithm to 
+        // check for straights is detailed later with "Check for straights".
+        RankMask m = (ranks_flushed << 1) | (ranks_flushed >> 12);
+        RankMask ranks_straight = (m & (m<<1) & (m<<2) & (m<<3) & (m<<4)) >> 1;
+        if (ranks_straight)
+        {
+            return HandStrength(StraightFlush, KeepHighestBitSet(ranks_straight));
+        }
+    }
+
+    // Check for four-of-a-kind. For seven or fewer cards, there can be 
+    // at most one four-of-a-kind combination.
+    if (ranks_4_times)
+    {
+        RankMask master = ranks_4_times;
+        RankMask kicker = KeepHighestBitSet(ranks_present & ~master);
+        return HandStrength(FourOfAKind, master, kicker);
+    }
+
+    // Check for full house.
+    // Note that for 7 cards, there may be two possible three-of-a-kind...
+    if (ranks_3_times)
+    {
+        RankMask master = KeepHighestBitSet(ranks_3_times);
+        RankMask kicker = ranks_2_times & ~master;
+        if (kicker)
+        {
+            kicker = KeepHighestBitSet(kicker);
+            return HandStrength(FullHouse, master, kicker);
+        }
+    }
+
+    // Check for flush.
+    if (ranks_flushed)
+    {
+        return HandStrength(Flush, KeepHighestBitsSet<5>(ranks_flushed));
+    }
+
+    // Check for straights. We first copy the Ace-bit to the lowest bit so 
+    // that we can easily test for 5-4-3-2-1 straight. Then a straight is 
+    // such that there are five consecutive bits set in the mask. This can 
+    // be tested by shift-and the mask five times. The highest bit left set
+    // is the best straight. If no bit is left set, there are no straights.
+    m = (ranks_present << 1) | (ranks_present >> 12);
+    RankMask mask_straight = (m & (m << 1) & (m << 2) & (m << 3) & (m << 4)) >> 1;
+    if (mask_straight)
+    {
+        return HandStrength(Straight, KeepHighestBitSet(mask_straight));
+    }
+
+    // Check for three-of-a-kind. For 7 cards, there may be two possible
+    // three-of-a-kind; however, that must have already led to a full-house.
+    // So here, we have at most one three-of-a-kind, together with a bunch
+    // of high cards.
+    if (ranks_3_times)
+    {
+        RankMask master = ranks_3_times;
+        RankMask kicker = KeepHighestBitsSet<2>(ranks_present & ~master);
+        return HandStrength(ThreeOfAKind, master, kicker);
+    }
+
+    // Check for two-pair and one pair.
+    if (ranks_2_times)
+    {
+        RankMask master = KeepHighestBitSet(ranks_2_times);
+        ranks_2_times &= ~master;
+        if (ranks_2_times) // two-pair
+        {
+            master |= KeepHighestBitSet(ranks_2_times);
+            RankMask kicker = KeepHighestBitSet(ranks_present & ~master);
+            return HandStrength(TwoPair, master, kicker);
+        }
+        else // one pair
+        {
+            RankMask kicker = KeepHighestBitsSet<3>(ranks_present & ~master);
+            return HandStrength(OnePair, master, kicker);
+        }
+    }
+
+    // Now we are left with high card.
+    return HandStrength(HighCard, KeepHighestBitsSet<5>(ranks_present));
 }
 
 #if 0
