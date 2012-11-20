@@ -2,7 +2,6 @@
 #define HOLDEM_HAND_H
 
 #include <stdint.h>
-#include "simd.hpp"
 
 /* Represents the rank of a card. */
 enum Rank
@@ -58,100 +57,6 @@ enum HandCategory
 /**
  * Represents a hand, i.e. a subset of a deck of 52 cards.
  *
- * To maximize performance, we use a 16-byte SIMD vector to store the hand
- * internally. The format of the vector is as follows:
- *
- *    15  14  13  12  11                  ...                  1   0
- *   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
- *   |S-H-D-C| 0 | A | K | Q | J | T | 9 | 8 | 7 | 6 | 5 | 4 | 3 | 2 |
- *   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
- *
- * Byte 0 to byte 12 stores information grouped by rank. Each byte has the
- * following format:
- *
- *     7   6   5   4   3   2   1   0
- *   +---+---+---+---+---+---+---+---+
- *   | 0 |   COUNT   | S | H | D | C |
- *   +---+---+---+---+---+---+---+---+
- *   
- * where the S, H, D, C bits are set if the cards of the corresponding rank
- * and suit is present in the hand, respectively. Bit 4 to 6 contains the
- * number of cards of the given rank in the hand. Bit 7 MUST be set to zero
- * because the underlying SIMD instruction only supports signed byte.
- *
- * Byte 13 is reserved and is always zero.
- *
- * Byte 14 to 15 is divided into four 4-bit groups to store the number of 
- * cards of each suit. Specifically, its format is as follows:
- *
- *    15  14  13  12  11  10   9   8   7   6   5   4   3   2   1   0
- *   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
- *   |  Spade-count  |  Heart-count  | Diamond-count |  Club-count   |
- *   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
- * 
- * The above format achieves two design goals to improve performance:
- * 1. Fast hand evaluation: a hand (with 5 or more cards) can be evaluated
- *    quickly using SIMD instructions on the representing vector.
- * 2. Fast hand construction: two hands can be combined quickly by directly
- *    adding up the two vectors that represent each hand.
- *
- * This format does enforce the restriction that no two idential cards can
- * be present in the same hand. This condition is certainly met when we draw
- * a hand from a single deck.
- */
-struct Hand
-{
-    simd::simd_t<int8_t,16> value;
-
-    Hand() { }
-    Hand(const simd::simd_t<int8_t,16> &_value) : value(_value) { }
-    Hand(const Card &card)
-    {
-        int r = card.rank;
-        int s = card.suit;
-        ((uint8_t*)&value)[r] += 0x10 | (1 << s);
-        ((uint16_t*)&value)[7] += 1 << (s * 4);
-    }
-    Hand(const Card *cards, size_t num_cards) 
-    {
-        for (size_t i = 0; i < num_cards; i++)
-        {
-            int r = cards[i].rank;
-            int s = cards[i].suit;
-            ((uint8_t*)&value)[r] += 0x10 | (1 << s);
-            ((uint16_t*)&value)[7] += 1 << (s * 4);
-        }
-    }
-    Hand(const Hand *hands, size_t num_hands)
-    {
-        for (size_t i = 0; i < num_hands; i++)
-            this->value += hands[i].value;
-    }
-
-    int GetCards(Card *cards) const;
-
-    Hand& operator += (const Hand &a)
-    {
-        this->value += a.value;
-        return *this;
-    }
-
-    Hand& operator -= (const Hand &a)
-    {
-        this->value -= a.value;
-        return *this;
-    }
-};
-
-/// Combines two hands.
-inline Hand operator + (const Hand &a, const Hand &b)
-{
-    return Hand(a.value + b.value);
-}
-
-/**
- * Represents a hand, i.e. a subset of a deck of 52 cards.
- *
  * To maximize performance, we use store the hand in a 64-bit integer 
  * internally. The 64 bits are divided into four 16-bit groups, each
  * storing information about a suit.
@@ -187,41 +92,46 @@ inline Hand operator + (const Hand &a, const Hand &b)
  *   2. There can be no more than 7 cards in the hand.
  * These conditions are certainly met when we work with hold 'em poker.
  */
-struct Hand2
+struct Hand
 {
     uint64_t value;
 
-    Hand2() : value(0) { }
-    Hand2(uint64_t _value) : value(_value) { }
-    Hand2(const Card &card) 
+    Hand() : value(0) { }
+    Hand(uint64_t _value) : value(_value) { }
+    Hand(const Card &card) 
         : value((0x2000ULL | (1ULL << card.rank)) << (card.suit * 16)) { }
-    Hand2(const Card *cards, size_t num_cards) : value(0)
+    Hand(const Card *cards, size_t num_cards) : value(0)
     {
         for (size_t i = 0; i < num_cards; i++)
-            value += Hand2(cards[i]).value;
+            value += Hand(cards[i]).value;
     }
-#if 0
-    Hand(const Hand *hands, size_t num_hands)
+
+    Hand(const Hand *hands, size_t num_hands) : value(0)
     {
         for (size_t i = 0; i < num_hands; i++)
-            this->value += hands[i].value;
+            value += hands[i].value;
     }
-#endif
 
     int GetCards(Card *cards) const;
 
-    Hand2& operator += (const Hand2 &a)
+    Hand& operator += (const Hand &a)
     {
         this->value += a.value;
         return *this;
     }
 
-    Hand2& operator -= (const Hand2 &a)
+    Hand& operator -= (const Hand &a)
     {
         this->value -= a.value;
         return *this;
     }
 };
+
+/// Combines two hands.
+inline Hand operator + (const Hand &a, const Hand &b)
+{
+    return Hand(a.value + b.value);
+}
 
 /**
  * Represents a bit-mask of ranks, where a bit is set if and only if the
@@ -305,26 +215,6 @@ inline bool operator != (const HandStrength &a, const HandStrength &b)
  * strongest five-card combination.
  */
 HandStrength EvaluateHand(const Hand &hand);
-HandStrength EvaluateHand2(const Hand2 &hand);
-
-#if 0
-/* Represents a hand of five cards. */
-struct hand_t
-{
-    //unsigned char category; /* see hand_category_t */
-    HandCategory category;
-    card_t cards[5];
-};
-
-/**
- * Computes the category of a hand and rearrange the card sequence of the
- * hand so that two hands in the same category can be compared lexically to
- * determine their strength.
- */
-hand_category_t normalize_hand(card_t cards[5]);
-
-hand_t make_hand(const card_t cards[5]);
-#endif
 
 /// Gets the character that represents a given rank.
 char format_rank(Rank rank);
@@ -334,17 +224,5 @@ void write_card(char s[3], Card card);
 //int compare_hands(const hand_t &a, const hand_t &b);
 
 //void write_hand(char s[20], const hand_t &h);
-
-#if 0
-inline bool operator < (const hand_t &a, const hand_t &b)
-{
-    return compare_hands(a, b) < 0;
-}
-
-inline bool operator > (const hand_t &a, const hand_t &b)
-{
-    return compare_hands(a, b) > 0;
-}
-#endif
 
 #endif /* HOLDEM_HAND_H */

@@ -26,9 +26,6 @@
     <ClInclude Include="src\hand.h">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\simd.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="src\intrinsic.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>

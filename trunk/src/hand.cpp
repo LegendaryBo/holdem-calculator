@@ -31,34 +31,17 @@ void write_card(char s[3], Card card)
 
 int Hand::GetCards(Card *cards) const
 {
+    uint64_t v = value & 0x1FFF1FFF1FFF1FFFULL;
     int n = 0;
-    RankMask ranks_present = simd::GetMask(value > 0x10) & 0x1FFF;
-    while (ranks_present)
+    while (v)
     {
-        int r = intrinsic::bit_scan_reverse(ranks_present);
-        int8_t b = ((int8_t*)&value)[r] & 0xF;
-        while (b)
-        {
-            int s = intrinsic::bit_scan_reverse(b);
-            cards[n++] = Card((Rank)r, (Suit)s);
-            b &= ~(1 << s);
-        }
-        ranks_present &= ~(1 << r);
+        int b = intrinsic::bit_scan_reverse(v);
+        cards[n].suit = (Suit)(b / 16);
+        cards[n].rank = (Rank)(b % 16);
+        n++;
+        v &= ~(1ULL << b);
     }
     return n;
-}
-
-/// Returns an integer with the highest N set bits of x kept.
-int KeepHighestBitsSet(int x, int N)
-{
-    int result = 0;
-    for (int i = 0; i < N && x; i++)
-    {
-        int b = intrinsic::bit_scan_reverse(x);
-        result |= (1 << b);
-        x &= ~result;
-    }
-    return result;
 }
 
 /// Returns an integer with the highest N set bits of x kept.
@@ -75,14 +58,6 @@ static RankMask KeepHighestBitsSet(RankMask x)
     return result;
 }
 
-#if 0
-template <typename T>
-T KeepHighestBitSet(T x)
-{
-    return KeepHighestBitsSet<1>(x);
-}
-#endif
-
 static RankMask KeepHighestBitSet(RankMask x)
 {
     return KeepHighestBitsSet<1>(x);
@@ -93,120 +68,6 @@ static RankMask KeepHighestBitSet(RankMask x)
  * strongest five-card combination.
  */
 HandStrength EvaluateHand(const Hand &hand)
-{
-    // Compute a mask of the ranks present in the hand.
-    int ranks_present = simd::GetMask(hand.value > 0x10) & 0x1FFF;
-    int ranks_paired = simd::GetMask(hand.value > 0x20) & 0x1FFF;
-    int ranks_3_of_a_kind = simd::GetMask(hand.value > 0x30) & 0x1FFF;
-
-    // Compute a mask of the flushed suit. (For seven or fewer cards, there
-    // can be at most one flushed suit.) The number of cards of each suit
-    // are stored in the four nibbles (4-bit integers) of the highest two 
-    // bytes in the hand's vector. To have five to seven cards of the same 
-    // suit (5 <= x <= 7), we have equivalently 8 <= x+3 <= 10. We can easily
-    // check for this condition by testing the highest bit of each nibble.
-    int suits_count = simd::extract<7>(simd::simd_t<uint16_t,8>(hand.value));
-    int suits_flushed = (suits_count + 0x3333) & 0x8888;
-    int ranks_flushed = 0;
-    if (suits_flushed)
-    {
-        int m = suits_flushed;
-        int8_t suits_mask = ((m >> 3) | (m >> 6) | (m >> 9) | (m >> 12)) & 0xF;
-        ranks_flushed = simd::GetMask((hand.value & suits_mask) > 0) & 0x1FFF;
-    }
-
-    // Check for straight flush.
-    if (suits_flushed)
-    {
-        // Check for straight within the flushed suit. This is automatic when
-        // there are exactly 5 cards; but when there are more than 5 cards, 
-        // straight and flush may not imply straight-flush. The algorithm to 
-        // check for straights is detailed later.
-        int m = (ranks_flushed << 1) | (ranks_flushed >> 12);
-        int mask_straight = (m & (m << 1) & (m << 2) & (m << 3) & (m << 4)) >> 1;
-        if (mask_straight)
-        {
-            return HandStrength(StraightFlush, KeepHighestBitSet(mask_straight));
-        }
-    }
-
-    // Check for four-of-a-kind. For seven or fewer cards, there can be 
-    // at most one four-of-a-kind combination.
-    int ranks_4_of_a_kind = simd::GetMask(hand.value > 0x40) & 0x1FFF;
-    if (ranks_4_of_a_kind)
-    {
-        RankMask master = KeepHighestBitSet(ranks_4_of_a_kind);
-        RankMask kicker = KeepHighestBitSet(ranks_present & ~master);
-        return HandStrength(FourOfAKind, master, kicker);
-    }
-
-    // Check for full house.
-    // Note that for 7 cards, there may be two possible three-of-a-kind...
-    if (ranks_3_of_a_kind)
-    {
-        RankMask master = KeepHighestBitSet(ranks_3_of_a_kind);
-        if (ranks_paired & ~master)
-        {
-            RankMask kicker = KeepHighestBitSet(ranks_paired & ~master);
-            return HandStrength(FullHouse, master, kicker);
-        }
-    }
-
-    // Check for flush.
-    if (ranks_flushed)
-    {
-        RankMask master = KeepHighestBitsSet(ranks_flushed, 5);
-        return HandStrength(Flush, master);
-    }
-
-    // Check for straights. We first copy the Ace-bit to the lowest bit so 
-    // that we can easily test for 5-4-3-2-1 straight. Then a straight is 
-    // such that there are five consecutive bits set in the mask. This can 
-    // be tested by shift-and the mask five times. The highest bit left set
-    // is the best straight. If no bit is left set, there are no straights.
-    int m = (ranks_present << 1) | (ranks_present >> 12);
-    int mask_straight = (m & (m << 1) & (m << 2) & (m << 3) & (m << 4)) >> 1;
-    if (mask_straight)
-    {
-        return HandStrength(Straight, KeepHighestBitSet(mask_straight));
-    }
-
-    // Check for three-of-a-kind.
-    // Note that for 7 cards, there may be two possible three-of-a-kind...
-    if (ranks_3_of_a_kind)
-    {
-        RankMask master = KeepHighestBitSet(ranks_3_of_a_kind);
-        RankMask kicker = KeepHighestBitsSet(ranks_present & ~master, 2);
-        return HandStrength(ThreeOfAKind, master, kicker);
-    }
-
-    // Check for two-pair and one pair.
-    if (ranks_paired)
-    {
-        RankMask master = KeepHighestBitSet(ranks_paired);
-        ranks_paired &= ~master;
-        if (ranks_paired) // two-pair
-        {
-            master |= KeepHighestBitSet(ranks_paired);
-            RankMask kicker = KeepHighestBitSet(ranks_present & ~master);
-            return HandStrength(TwoPair, master, kicker);
-        }
-        else // one pair
-        {
-            RankMask kicker = KeepHighestBitsSet(ranks_present & ~master, 3);
-            return HandStrength(OnePair, master, kicker);
-        }
-    }
-
-    // Now we are left with high card.
-    return HandStrength(HighCard, KeepHighestBitsSet(ranks_present, 5));
-}
-
-/**
- * Evaluates a hand of five to seven cards and returns the strength of the
- * strongest five-card combination.
- */
-HandStrength EvaluateHand2(const Hand2 &hand)
 {
     // Let v be the rank masks excluding the counter bits.
     uint64_t v = hand.value & 0x1FFF1FFF1FFF1FFFULL;

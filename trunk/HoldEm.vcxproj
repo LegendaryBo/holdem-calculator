@@ -80,7 +80,6 @@
   <ItemGroup>
     <ClInclude Include="src\hand.h" />
     <ClInclude Include="src\intrinsic.hpp" />
-    <ClInclude Include="src\simd.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
