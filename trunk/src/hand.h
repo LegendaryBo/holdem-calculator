@@ -138,7 +138,11 @@ inline Hand operator + (const Hand &a, const Hand &b)
  * corresponding rank is present. Only the lower 13 bits are used, and the
  * higher 3 bits must always be set to zero.
  */
+#if 1
 typedef uint16_t RankMask;
+#else
+typedef int RankMask;
+#endif
 
 /**
  * Represents the strength of a 5-card hand. 

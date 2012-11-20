@@ -10,8 +10,8 @@ static const char suit_s[8] = { 'C','D','H','S', '\x05', '\x04', '\x03', '\x06' 
 
 Card::Card(char _rank, char _suit)
 {
-    int r = std::find(rank_s + 0, rank_s + 13, std::toupper(_rank)) - rank_s;
-    int s = std::find(suit_s + 0, suit_s + 4, std::toupper(_suit)) - suit_s;
+    size_t r = std::find(rank_s + 0, rank_s + 13, std::toupper(_rank)) - rank_s;
+    size_t s = std::find(suit_s + 0, suit_s + 4, std::toupper(_suit)) - suit_s;
     assert(r < 13 && s < 8);
     this->rank = (Rank)r;
     this->suit = (Suit)(s % 4);
@@ -64,13 +64,18 @@ static RankMask KeepHighestBitSet(RankMask x)
 }
 
 /**
- * Evaluates a hand of five to seven cards and returns the strength of the
+ * Evaluates a hand of five or seven cards and returns the strength of the
  * strongest five-card combination.
  */
 HandStrength EvaluateHand(const Hand &hand)
 {
     // Let v be the rank masks excluding the counter bits.
-    uint64_t v = hand.value & 0x1FFF1FFF1FFF1FFFULL;
+    uint64_t v = hand.value & 0x1FFF1FFF1FFF1FFFULL;  // rank mask
+    uint64_t sc = hand.value & 0xE000E000E000E000ULL; // suit counter
+
+    // Get the total number of cards in the hand.
+    int num_cards = ((sc >> 13) + (sc >> 29) + (sc >> 45) + (sc >> 61)) & 7;
+    assert(num_cards == 5 || num_cards == 7);
 
     // Compute masks of the ranks present in the hand, ranks that appear at
     // least twice, ranks that appear at least 3 times, etc.
@@ -101,13 +106,12 @@ HandStrength EvaluateHand(const Hand &hand)
     // the 0x4 bit unset, or the 0x4 bit set but the lower 2 bits unset. Thus
     // we can check for flushed suit by testing the following condition:
     // bit 0x4 and (bit 0x2 or bit 0x1) != 0.
-    uint64_t sc = hand.value & 0xE000E000E000E000ULL;      // suit counters
-    sc &= ((sc << 1) | (sc << 2)) & 0x8000800080008000ULL; // test flush
+    uint64_t test = sc & ((sc << 1) | (sc << 2)) & 0x8000800080008000ULL;
     RankMask ranks_flushed = 0;
-    if (sc)
+    if (test)
     {
         Suit suit_flushed = (Suit)(intrinsic::bit_scan_reverse(sc) / 16);
-        ranks_flushed = (RankMask)(v >> (16 * suit_flushed));
+        ranks_flushed = (uint16_t)(v >> (16 * suit_flushed));
     }
 
     // Check for straight flush.
@@ -189,13 +193,32 @@ HandStrength EvaluateHand(const Hand &hand)
         }
         else // one pair
         {
-            RankMask kicker = KeepHighestBitsSet<3>(ranks_present & ~master);
+            RankMask kicker = ranks_present & ~master;
+#if 0
+            KeepHighestBitsSet<3>(ranks_present & ~master);
+#else
+            if (num_cards == 7) // one pair + 5 high cards
+            {
+                kicker &= (kicker - 1);
+                kicker &= (kicker - 1);
+            }
+#endif
             return HandStrength(OnePair, master, kicker);
         }
     }
 
     // Now we are left with high card.
-    return HandStrength(HighCard, KeepHighestBitsSet<5>(ranks_present));
+    RankMask kicker = ranks_present;
+#if 0
+    kicker = KeepHighestBitsSet<5>(ranks_present);
+#else
+    if (num_cards == 7) // 7 high cards
+    {
+        kicker &= (kicker - 1);
+        kicker &= (kicker - 1);
+    }
+#endif
+    return HandStrength(HighCard, kicker);
 }
 
 #if 0
