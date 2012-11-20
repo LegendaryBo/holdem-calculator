@@ -148,6 +148,19 @@ void simulate(int num_players, int num_simulations)
 			// Find the best 5-card combination from these 7 cards.
             HandStrength strength = EvaluateHand(community + hole);
 
+#if 1
+            // Check our new algorithm!
+            Card tt[7];
+            (community + hole).GetCards(tt);
+            Hand2 h2(tt, 7);
+            HandStrength str2 = EvaluateHand2(h2);
+            if (str2 != strength)
+            {
+                printf("Wrong!\n");
+                getc(stdin);
+            }
+#endif
+
 			// Update the winning hand statistics for a game with j+1 players.
 			if (j == 0 || strength > win_strength)
 			{
