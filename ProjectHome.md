@@ -1,0 +1,1 @@
+This project computes the mathematical odds of hold 'em hands. It does not implement any strategy to play.
